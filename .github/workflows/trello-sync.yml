@@ -11,48 +11,56 @@ jobs:
   update-trello:
     runs-on: ubuntu-latest
     steps:
-      - name: Extract Trello Card ID from commit message
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Parse commits and extract Trello card IDs
         id: extract
         run: |
-          echo "MESSAGE=$(git log -1 --pretty=%B)" >> $GITHUB_ENV
-          CARD_ID=$(echo "$MESSAGE" | grep -oE 'TRELLO-[0-9]+' | head -1 || true)
-          if [ -z "$CARD_ID" ]; then
-            echo "No Trello card found."
-            echo "found=false" >> $GITHUB_OUTPUT
-          else
-            echo "found=true" >> $GITHUB_OUTPUT
-            echo "card_id=$CARD_ID" >> $GITHUB_OUTPUT
-          fi
+          echo "card_ids=" >> $GITHUB_OUTPUT
+          echo "messages=" >> $GITHUB_OUTPUT
 
-      - name: Stop if no Trello card detected
-        if: steps.extract.outputs.found == 'false'
-        run: echo "Skipping – no Trello card in commit."
+          # loop through each commit in this push
+          for commit in $(jq -cr '.commits[]' <<< "${GITHUB_EVENT_PATH}" | sed 's/ /_/g'); do
+            commit_msg=$(echo "$commit" | jq -r '.message')
+            
+            # extract trello:<id>
+            if [[ "$commit_msg" =~ trello:([0-9]+) ]]; then
+              card_id="${BASH_REMATCH[1]}"
+              echo "Found card: $card_id"
+              echo "card_ids+=${card_id} " >> $GITHUB_OUTPUT
+              echo "messages+=${commit_msg//$'\n'/ };;" >> $GITHUB_OUTPUT
+            fi
+          done
 
-      - name: Find Trello Card by name
-        if: steps.extract.outputs.found == 'true'
-        id: findcard
+      - name: Exit if no Trello reference found
+        if: ${{ steps.extract.outputs.card_ids == '' }}
+        run: echo "No Trello reference found in commits."
+
+      - name: Process each Trello card
+        if: ${{ steps.extract.outputs.card_ids != '' }}
         run: |
-          CARD_ID="${{ steps.extract.outputs.card_id }}"
-          RESPONSE=$(curl -s \
-            "https://api.trello.com/1/search?query=$CARD_ID&modelTypes=cards&key=${{ secrets.TRELLO_KEY }}&token=${{ secrets.TRELLO_TOKEN }}")
-          CARD_REAL_ID=$(echo $RESPONSE | jq -r '.cards[0].id')
-          echo "actual_id=$CARD_REAL_ID" >> $GITHUB_OUTPUT
+          IFS=' ' read -r -a cards <<< "${{ steps.extract.outputs.card_ids }}"
+          IFS=';;' read -r -a msgs <<< "${{ steps.extract.outputs.messages }}"
 
-      - name: Add commit as comment to Trello card
-        if: steps.extract.outputs.found == 'true'
-        run: |
-          COMMENT="New commit pushed:\n${{ env.MESSAGE }}\nCommit URL: ${{ github.event.head_commit.url }}"
-          curl -X POST \
-            "https://api.trello.com/1/cards/${{ steps.findcard.outputs.actual_id }}/actions/comments" \
-            -d "text=$COMMENT" \
-            -d "key=${{ secrets.TRELLO_KEY }}" \
-            -d "token=${{ secrets.TRELLO_TOKEN }}"
+          for i in "${!cards[@]}"; do
+            CARD="${cards[$i]}"
+            MSG="${msgs[$i]}"
 
-      - name: Move card from Dev → Review
-        if: steps.extract.outputs.found == 'true'
-        run: |
-          curl -X PUT \
-            "https://api.trello.com/1/cards/${{ steps.findcard.outputs.actual_id }}" \
-            -d "idList=${{ secrets.TRELLO_REVIEW_LIST_ID }}" \
-            -d "key=${{ secrets.TRELLO_KEY }}" \
-            -d "token=${{ secrets.TRELLO_TOKEN }}"
+            echo "Updating Trello card $CARD with message:"
+            echo "$MSG"
+
+            # 1. Add commit message as comment
+            curl -X POST \
+              "https://api.trello.com/1/cards/$CARD/actions/comments" \
+              -d "key=${{ secrets.TRELLO_KEY }}" \
+              -d "token=${{ secrets.TRELLO_TOKEN }}" \
+              -d "text=$MSG"
+
+            # 2. Move card to Review list
+            curl -X PUT \
+              "https://api.trello.com/1/cards/$CARD" \
+              -d "key=${{ secrets.TRELLO_KEY }}" \
+              -d "token=${{ secrets.TRELLO_TOKEN }}" \
+              -d "idList=${{ secrets.TRELLO_REVIEW_LIST_ID }}"
+          done
