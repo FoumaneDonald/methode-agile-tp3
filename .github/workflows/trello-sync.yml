@@ -11,59 +11,26 @@ jobs:
   update-trello:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Extract Trello IDs from commit messages
+      - name: Extract Trello Card ID from commit message
         id: extract
         run: |
-          ids=""
-          msgs=""
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          CARD_ID=$(echo "$COMMIT_MSG" | grep -oP 'trello:\K[A-Za-z0-9]+' || echo "")
+          echo "Found: $CARD_ID"
+          echo "card_id=$CARD_ID" >> $GITHUB_OUTPUT
 
-          # iterate safely through JSON list
-          jq -c '.commits[]' "$GITHUB_EVENT_PATH" | while read commit; do
-            message=$(echo "$commit" | jq -r '.message')
-
-            # detect trello:FTn57FpX (alphanumeric)
-            if [[ "$message" =~ trello:([A-Za-z0-9]+) ]]; then
-              card_id="${BASH_REMATCH[1]}"
-              echo "Found Trello card: $card_id"
-
-              ids+="$card_id "
-              msgs+="$message;;"
-            fi
-          done
-
-          echo "ids=$ids" >> $GITHUB_OUTPUT
-          echo "msgs=$msgs" >> $GITHUB_OUTPUT
-
-      - name: Stop if no Trello reference found
-        if: ${{ steps.extract.outputs.ids == '' }}
-        run: echo "No Trello card IDs found in commit messages."
-
-      - name: Update Trello Cards
-        if: ${{ steps.extract.outputs.ids != '' }}
+      - name: Add comment to Trello card
+        if: steps.extract.outputs.card_id != ''
         run: |
-          IFS=' ' read -r -a CARDS <<< "${{ steps.extract.outputs.ids }}"
-          IFS=';;' read -r -a MSGS <<< "${{ steps.extract.outputs.msgs }}"
+          curl -X POST "https://api.trello.com/1/cards/${{ steps.extract.outputs.card_id }}/actions/comments" \
+          -d "key=${{ secrets.TRELLO_API_KEY }}" \
+          -d "token=${{ secrets.TRELLO_TOKEN }}" \
+          -d "text=Commit poussé par $$ {{ github.actor }}%0A $${{ github.event.head_commit.message }}%0A${{ github.event.head_commit.url }}"
 
-          for index in "${!CARDS[@]}"; do
-            CARD=${CARDS[$index]}
-            MSG=${MSGS[$index]}
-
-            echo "Updating Trello card $CARD..."
-
-            # Add commit message as comment
-            curl -X POST \
-              "https://api.trello.com/1/cards/$CARD/actions/comments" \
-              -d "key=${{ secrets.TRELLO_KEY }}" \
-              -d "token=${{ secrets.TRELLO_TOKEN }}" \
-              -d "text=$MSG"
-
-            # Move card to Review list
-            curl -X PUT \
-              "https://api.trello.com/1/cards/$CARD" \
-              -d "key=${{ secrets.TRELLO_KEY }}" \
-              -d "token=${{ secrets.TRELLO_TOKEN }}" \
-              -d "idList=${{ secrets.TRELLO_REVIEW_LIST_ID }}"
-          done
+      - name: Move card to EN REVUE (main branch only)
+        if: github.ref == 'refs/heads/main' && steps.extract.outputs.card_id != ''
+        run: |
+          curl -X PUT "https://api.trello.com/1/cards/${{ steps.extract.outputs.card_id }}" \
+          -d "key=${{ secrets.TRELLO_API_KEY }}" \
+          -d "token=${{ secrets.TRELLO_TOKEN }}" \
+          -d "idList=${{ secrets.TRELLO_LIST_EN_REVUE }}"
