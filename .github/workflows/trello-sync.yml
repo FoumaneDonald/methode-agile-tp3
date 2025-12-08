@@ -20,14 +20,14 @@ jobs:
           ids=""
           msgs=""
 
-          # Read each commit from the event payload
-          for commit in $(jq -c '.commits[]' < "$GITHUB_EVENT_PATH"); do
+          # iterate safely through JSON list
+          jq -c '.commits[]' "$GITHUB_EVENT_PATH" | while read commit; do
             message=$(echo "$commit" | jq -r '.message')
 
-            # Detect Trello IDs like trello:FTn57FpX
+            # detect trello:FTn57FpX (alphanumeric)
             if [[ "$message" =~ trello:([A-Za-z0-9]+) ]]; then
               card_id="${BASH_REMATCH[1]}"
-              echo "Found card ID: $card_id"
+              echo "Found Trello card: $card_id"
 
               ids+="$card_id "
               msgs+="$message;;"
