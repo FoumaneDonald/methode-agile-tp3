@@ -14,50 +14,53 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Parse commits and extract Trello card IDs
+      - name: Extract Trello IDs from commit messages
         id: extract
         run: |
-          echo "card_ids=" >> $GITHUB_OUTPUT
-          echo "messages=" >> $GITHUB_OUTPUT
+          ids=""
+          msgs=""
 
-          # loop through each commit in this push
-          for commit in $(jq -cr '.commits[]' <<< "${GITHUB_EVENT_PATH}" | sed 's/ /_/g'); do
-            commit_msg=$(echo "$commit" | jq -r '.message')
-            
-            # extract trello:<id>
-            if [[ "$commit_msg" =~ trello:([0-9]+) ]]; then
+          # Read each commit from the event payload
+          for commit in $(jq -c '.commits[]' < "$GITHUB_EVENT_PATH"); do
+            message=$(echo "$commit" | jq -r '.message')
+
+            # Detect Trello IDs like trello:FTn57FpX
+            if [[ "$message" =~ trello:([A-Za-z0-9]+) ]]; then
               card_id="${BASH_REMATCH[1]}"
-              echo "Found card: $card_id"
-              echo "card_ids+=${card_id} " >> $GITHUB_OUTPUT
-              echo "messages+=${commit_msg//$'\n'/ };;" >> $GITHUB_OUTPUT
+              echo "Found card ID: $card_id"
+
+              ids+="$card_id "
+              msgs+="$message;;"
             fi
           done
 
-      - name: Exit if no Trello reference found
-        if: ${{ steps.extract.outputs.card_ids == '' }}
-        run: echo "No Trello reference found in commits."
+          echo "ids=$ids" >> $GITHUB_OUTPUT
+          echo "msgs=$msgs" >> $GITHUB_OUTPUT
 
-      - name: Process each Trello card
-        if: ${{ steps.extract.outputs.card_ids != '' }}
+      - name: Stop if no Trello reference found
+        if: ${{ steps.extract.outputs.ids == '' }}
+        run: echo "No Trello card IDs found in commit messages."
+
+      - name: Update Trello Cards
+        if: ${{ steps.extract.outputs.ids != '' }}
         run: |
-          IFS=' ' read -r -a cards <<< "${{ steps.extract.outputs.card_ids }}"
-          IFS=';;' read -r -a msgs <<< "${{ steps.extract.outputs.messages }}"
+          IFS=' ' read -r -a CARDS <<< "${{ steps.extract.outputs.ids }}"
+          IFS=';;' read -r -a MSGS <<< "${{ steps.extract.outputs.msgs }}"
 
-          for i in "${!cards[@]}"; do
-            CARD="${cards[$i]}"
-            MSG="${msgs[$i]}"
+          for index in "${!CARDS[@]}"; do
+            CARD=${CARDS[$index]}
+            MSG=${MSGS[$index]}
 
-            echo "Updating Trello card $CARD with message:"
-            echo "$MSG"
+            echo "Updating Trello card $CARD..."
 
-            # 1. Add commit message as comment
+            # Add commit message as comment
             curl -X POST \
               "https://api.trello.com/1/cards/$CARD/actions/comments" \
               -d "key=${{ secrets.TRELLO_KEY }}" \
               -d "token=${{ secrets.TRELLO_TOKEN }}" \
               -d "text=$MSG"
 
-            # 2. Move card to Review list
+            # Move card to Review list
             curl -X PUT \
               "https://api.trello.com/1/cards/$CARD" \
               -d "key=${{ secrets.TRELLO_KEY }}" \
