@@ -25,3 +25,11 @@ jobs:
             -d "key=${{ secrets.TRELLO_KEY }}" \
             -d "token=${{ secrets.TRELLO_TOKEN }}" \
             -d "text=Commit push by ${{ github.actor }}%0A${{ github.event.head_commit.message }}%0A${{ github.event.head_commit.url }}"
+
+      - name: Move card to REVIEW list
+        if: github.ref == 'refs/heads/main' && steps.extract.outputs.card_id != ''
+        run: |
+          curl -X PUT "https://api.trello.com/1/cards/${{ steps.extract.outputs.card_id }}" \
+            -d "key=${{ secrets.TRELLO_KEY }}" \
+            -d "token=${{ secrets.TRELLO_TOKEN }}" \
+            -d "idList=${{ secrets.TRELLO_REVIEW_LIST_ID }}"
