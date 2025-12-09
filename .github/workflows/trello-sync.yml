@@ -16,5 +16,12 @@ jobs:
         run: |
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           CARD_ID=$(echo "$COMMIT_MSG" | grep -oP 'TRELLO-\K[A-Za-z0-9]{8}' || echo "")
-          echo "CARD_ID: $CARD_ID"
           echo "card_id=$CARD_ID" >> $GITHUB_OUTPUT
+
+      - name: Add comment to Trello card
+        if: steps.extract.outputs.card_id != ''
+        run: |
+          curl -X POST "https://api.trello.com/1/cards/${{ steps.extract.outputs.card_id }}/actions/comments" \
+            -d "key=${{ secrets.TRELLO_KEY }}" \
+            -d "token=${{ secrets.TRELLO_TOKEN }}" \
+            -d "text=Commit push by ${{ github.actor }}%0A${{ github.event.head_commit.message }}%0A${{ github.event.head_commit.url }}"
