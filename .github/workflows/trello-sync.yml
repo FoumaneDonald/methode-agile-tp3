@@ -11,51 +11,9 @@ jobs:
   update-trello:
     runs-on: ubuntu-latest
     steps:
-      - name: Move Card to Review
-        uses: actions/github-script@v6
-        env:
-          TRELLO_KEY: ${{ secrets.TRELLO_KEY }}
-          TRELLO_TOKEN: ${{ secrets.TRELLO_TOKEN }}
-          TRELLO_REVIEW_LIST_ID: ${{ secrets.TRELLO_REVIEW_LIST_ID }}
-        with:
-          script: |
-            const commitMessage = context.payload.head_commit.message;
-            console.log(`Checking commit message: "${commitMessage}"`);
-
-            // Regex to find "Card: XXXXXX" or "ID: XXXXXX"
-            // Case insensitive, allows optional colon
-            const regex = /(?:Card|ID)\s?[:]?\s?([a-zA-Z0-9]{8,})/i;
-            const match = commitMessage.match(regex);
-
-            if (!match) {
-              console.log("No Trello Card ID found (format: 'Card: XXXXXXXX').");
-              return;
-            }
-
-            const cardId = match[1];
-            console.log(`Found Card ID: ${cardId}`);
-
-            // API Setup
-            const key = process.env.TRELLO_KEY;
-            const token = process.env.TRELLO_TOKEN;
-            const reviewListId = process.env.TRELLO_REVIEW_LIST_ID;
-
-            // Using the Short Link directly in the URL works for the API
-            const url = `https://api.trello.com/1/cards/${cardId}?idList=${reviewListId}&key=${key}&token=${token}`;
-
-            try {
-              const response = await fetch(url, {
-                method: 'PUT',
-                headers: { 'Accept': 'application/json' }
-              });
-
-              if (!response.ok) {
-                // If 404, it usually means the ID was wrong
-                throw new Error(`Trello API Error: ${response.status} ${response.statusText}`);
-              }
-
-              const data = await response.json();
-              console.log(`Success! Moved card "${data.name}" to Code Review.`);
-            } catch (error) {
-              core.setFailed(`Failed to move card: ${error.message}`);
-            }
+      - name: Extract Trello Card ID from commit message
+        id: extract
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          CARD_ID=$(echo "$COMMIT_MSG" | grep -oP 'TRELLO-\K[A-Za-z0-9]{8}' || echo "")
+          echo "card_id=$CARD_ID" >> $GITHUB_OUTPUT
